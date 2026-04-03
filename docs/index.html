@@ -267,7 +267,7 @@
             <div class="field"><label>Account Balance ($)</label><input type="number" id="f-balance" value="20000" min="0" max="100000" step="1000"></div>
             <div class="field">
               <label>Distance from Home (km) <span style="color:var(--accent);font-size:9px">auto</span></label>
-              <input type="number" id="f-distance" value="50" min="0" max="15000" readonly style="opacity:0.6;cursor:not-allowed">
+              <input type="number" id="f-distance" value="0" min="0" max="15000" readonly style="opacity:0.6;cursor:not-allowed">
             </div>
             <div class="field"><label>Time (HH:MM)</label><input type="text" id="f-time" value="14:30"></div>
             <div class="field">
@@ -286,6 +286,9 @@
               <select id="f-card"><option>Debit</option><option>Credit</option></select>
             </div>
             <div class="field">
+              <!-- FIX: Transaction Location defaults to "London" (vs home "New York")
+                   so the auto-computed distance is non-zero on page load, giving
+                   the user an informative starting state. -->
               <label>Transaction Location</label>
               <select id="f-location">
                 <option>New York</option><option>Toronto</option><option>Los Angeles</option>
@@ -293,7 +296,7 @@
                 <option>Dallas</option><option>San Francisco</option><option>Calgary</option>
                 <option>Detroit</option><option>Miami</option><option>Atlanta</option>
                 <option>Seattle</option><option>Denver</option><option>Boston</option>
-                <option>Phoenix</option><option>London</option><option>Paris</option>
+                <option>Phoenix</option><option selected>London</option><option>Paris</option>
                 <option>Berlin</option><option>Madrid</option><option>Rome</option>
                 <option>Amsterdam</option><option>Dublin</option><option>Zurich</option>
                 <option>Vienna</option><option>Brussels</option><option>Copenhagen</option>
@@ -304,7 +307,7 @@
             <div class="field">
               <label>Home Location</label>
               <select id="f-home">
-                <option>New York</option><option>Toronto</option><option>Los Angeles</option>
+                <option selected>New York</option><option>Toronto</option><option>Los Angeles</option>
                 <option>Chicago</option><option>Vancouver</option><option>Montreal</option>
                 <option>Dallas</option><option>San Francisco</option><option>Calgary</option>
                 <option>Detroit</option><option>Miami</option><option>Atlanta</option>
@@ -451,7 +454,7 @@
     <p style="font-size:10px;color:var(--text-faint);font-family:var(--font-mono);margin-top:18px;line-height:1.9;border-top:1px solid var(--border);padding-top:14px;letter-spacing:0.02em">
       ASSUMPTIONS — Cost figures are illustrative and denominated in the same units as the dataset.
       FP/FN costs should be calibrated to your institution's actual cost structure.
-      Projections scale linearly from the 10,000-row test set to monthly volume.
+      Projections scale linearly from the test set to monthly volume.
     </p>
   </div>
 

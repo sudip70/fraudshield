@@ -3,8 +3,23 @@ services:
     name: fraudshield-api
     env: python
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
+    # FIX: train the model during build if the artifact isn't already committed.
+    # The conditional ensures a pre-trained models/model.pkl (committed to the repo)
+    # is reused as-is, avoiding a ~60s training step on every deploy.
+    # If you prefer to always retrain on deploy, replace with:
+    #   buildCommand: pip install -r backend/requirements.txt && python src/pipeline.py data/FraudShield_Banking_Data.csv
+    buildCommand: >
+      pip install -r backend/requirements.txt &&
+      python -c "
+      import os, subprocess, sys
+      if not os.path.exists('models/model.pkl'):
+          print('Model artifact not found — training now...')
+          result = subprocess.run([sys.executable, 'src/pipeline.py', 'data/FraudShield_Banking_Data.csv'])
+          sys.exit(result.returncode)
+      else:
+          print('Model artifact found — skipping training.')
+      "
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: "3.11.0"

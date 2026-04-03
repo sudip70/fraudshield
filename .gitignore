@@ -11,8 +11,10 @@ __pycache__/
 # Mac system files
 .DS_Store
 
-# Data files
+# Raw data files (large — download separately or commit if < 100 MB)
+# Remove the line below if you want to commit your CSV for Render auto-training
 data/
 
-# Models
-models/
+# NOTE: models/model.pkl is intentionally NOT ignored.
+# Commit the trained artifact so Render can start without re-training.
+# To regenerate: python src/pipeline.py data/FraudShield_Banking_Data.csv

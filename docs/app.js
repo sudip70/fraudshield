@@ -54,7 +54,7 @@ let EDA_DATA     = null;
 let MODEL_DATA   = null;
 let THRESH_DATA  = null;
 let scoreHistory = [];
-let charts = {};
+let charts       = {};
 
 // ── CHART DEFAULTS ────────────────────────────────────────────────────────────
 const GRID  = '#1E2A3A';
@@ -66,20 +66,20 @@ const AMBER = '#E8A020';
 const BLUE  = '#3B82F6';
 const PUR   = '#8B5CF6';
 
-Chart.defaults.color       = '#7A92AE';
-Chart.defaults.borderColor = GRID;
-Chart.defaults.font.family = "'IBM Plex Mono', monospace";
-Chart.defaults.font.size   = 10;
-Chart.defaults.plugins.legend.labels.boxWidth = 10;
-Chart.defaults.plugins.legend.labels.padding  = 14;
-Chart.defaults.plugins.legend.labels.color    = TEXT;
-Chart.defaults.plugins.tooltip.backgroundColor = '#141920';
-Chart.defaults.plugins.tooltip.borderColor    = GRID;
-Chart.defaults.plugins.tooltip.borderWidth    = 1;
-Chart.defaults.plugins.tooltip.titleColor     = TEXT;
-Chart.defaults.plugins.tooltip.bodyColor      = '#7A92AE';
-Chart.defaults.plugins.tooltip.padding        = 10;
-Chart.defaults.animation.duration             = 600;
+Chart.defaults.color                              = '#7A92AE';
+Chart.defaults.borderColor                        = GRID;
+Chart.defaults.font.family                        = "'IBM Plex Mono', monospace";
+Chart.defaults.font.size                          = 10;
+Chart.defaults.plugins.legend.labels.boxWidth     = 10;
+Chart.defaults.plugins.legend.labels.padding      = 14;
+Chart.defaults.plugins.legend.labels.color        = TEXT;
+Chart.defaults.plugins.tooltip.backgroundColor    = '#141920';
+Chart.defaults.plugins.tooltip.borderColor        = GRID;
+Chart.defaults.plugins.tooltip.borderWidth        = 1;
+Chart.defaults.plugins.tooltip.titleColor         = TEXT;
+Chart.defaults.plugins.tooltip.bodyColor          = '#7A92AE';
+Chart.defaults.plugins.tooltip.padding            = 10;
+Chart.defaults.animation.duration                 = 600;
 
 function makeChart(id, config) {
   if (charts[id]) charts[id].destroy();
@@ -99,7 +99,7 @@ function lerpColor(a, b, t) {
   }).join('');
 }
 
-function el(id) { return document.getElementById(id); }
+function el(id)           { return document.getElementById(id); }
 function setText(id, val) { const e = el(id); if (e) e.textContent = val; }
 
 const pct = v => (v * 100).toFixed(2) + '%';
@@ -133,7 +133,6 @@ async function apiFetch(path) {
 }
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
-// Called once from DOMContentLoaded below — NOT called here directly.
 async function boot() {
   try {
     const health = await apiFetch('/api/health');
@@ -160,8 +159,10 @@ function populateKPIs(eda, model) {
   const o = eda.overview;
   animCount(el('kpi-total'), o.total_transactions, '', 0);
   animCount(el('kpi-fraud'), o.total_fraud, '', 0);
-  setText('kpi-rate',  pct(o.fraud_rate));
-  setText('kpi-vol',   o.total_amount.toFixed(0) + 'M');  // ← was throwing TypeError (element missing)
+  setText('kpi-rate', pct(o.fraud_rate));
+
+  // FIX: divide by 1,000,000 before appending 'M' — was showing raw number + 'M'
+  setText('kpi-vol', (o.total_amount / 1_000_000).toFixed(1) + 'M');
 
   const best = model.comparison.find(m => m.is_best);
   setText('kpi-model', best.name.split(' ')[0]);
@@ -190,7 +191,7 @@ function hBarConfig(labels, data, c1, c2) {
 // EDA CHARTS
 // ══════════════════════════════════════════════════════════════════════════════
 function renderEDACharts(d) {
-  const sort = (arr, key) => [...arr].sort((a, b) => a.fraud_rate - b.fraud_rate);
+  const sort = arr => [...arr].sort((a, b) => a.fraud_rate - b.fraud_rate);
 
   const typ = sort(d.fraud_by_type);
   makeChart('chart-type', hBarConfig(typ.map(r => r.Transaction_Type), typ.map(r => r.fraud_rate), BLUE, MINT));
@@ -279,11 +280,11 @@ function renderEDACharts(d) {
 // ══════════════════════════════════════════════════════════════════════════════
 // MODEL CHARTS
 // ══════════════════════════════════════════════════════════════════════════════
-let modelChartsRendered = false;
 
 function renderModelCharts(d) {
-  if (modelChartsRendered) return;
-  modelChartsRendered = true;
+  // FIX: check live Chart instance instead of a stale boolean flag —
+  // allows re-render if charts are destroyed without a full page reload.
+  if (charts['chart-roc'] && !charts['chart-roc'].destroyed) return;
 
   const palette = [MINT, PUR, '#EC4899'];
 
@@ -384,8 +385,8 @@ function renderModelCharts(d) {
       type: 'line',
       data: {
         datasets: [
-          { label: 'Model', data: cal.prob_pred.map((x, i) => ({ x, y: cal.prob_true[i] })), borderColor: MINT, borderWidth: 1.5, pointBackgroundColor: MINT, pointRadius: 4, fill: false },
-          { label: 'Perfect', data: [{ x: 0, y: 0 }, { x: 1, y: 1 }], borderColor: GRID, borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
+          { label: 'Model',   data: cal.prob_pred.map((x, i) => ({ x, y: cal.prob_true[i] })), borderColor: MINT, borderWidth: 1.5, pointBackgroundColor: MINT, pointRadius: 4, fill: false },
+          { label: 'Perfect', data: [{ x: 0, y: 0 }, { x: 1, y: 1 }],                        borderColor: GRID, borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
         ],
       },
       options: {
@@ -413,11 +414,17 @@ function renderModelCharts(d) {
     <strong style="color:var(--warning)">LIMITATIONS</strong> — Trained on synthetic data; calibration may drift on real distributions<br>
     <strong style="color:var(--warning)">BIAS CHECK</strong> — No demographic features used — no protected-class risk`;
 
+  // FIX: show both Normal (0) and Fraud (1) class metrics — was hardcoding '—' for Normal
   el('clf-report-wrap').innerHTML = `
     <table class="data-table">
       <thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
       <tbody>
-        <tr><td>Normal (0)</td><td style="color:var(--text-faint)">—</td><td style="color:var(--text-faint)">—</td><td style="color:var(--text-faint)">—</td></tr>
+        <tr>
+          <td>Normal (0)</td>
+          <td class="num">${best.precision_normal}</td>
+          <td class="num">${best.recall_normal}</td>
+          <td class="num">${best.f1_normal}</td>
+        </tr>
         <tr class="best-row">
           <td>Fraud (1)</td>
           <td class="num">${best.precision}</td>
@@ -463,23 +470,20 @@ function updateThresholdMetrics(t) {
   setText('tm-fn',   row.fn.toLocaleString());
 }
 
-el('threshold-slider').addEventListener('input', function () {
-  const v = parseFloat(this.value);
-  setText('slider-val-display', v.toFixed(2));
-  updateThresholdMetrics(v);
-});
-
 // ══════════════════════════════════════════════════════════════════════════════
 // LIVE SCORER
 // ══════════════════════════════════════════════════════════════════════════════
 function updateDistance() {
+  const distEl = el('f-distance');
+  if (!distEl) return;
   const d = haversine(el('f-home').value, el('f-location').value);
-  if (d !== null && el('f-distance')) el('f-distance').value = d;
+  // FIX: only update if both cities are known; preserve existing value otherwise
+  if (d !== null) distEl.value = d;
 }
 
 async function scoreTransaction() {
   const btn = el('score-btn');
-  btn.disabled = true;
+  btn.disabled   = true;
   btn.textContent = '⏳ Scoring…';
 
   const payload = {
@@ -505,9 +509,9 @@ async function scoreTransaction() {
 
   try {
     const res = await fetch(API_URL + '/api/predict', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body:    JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -517,7 +521,7 @@ async function scoreTransaction() {
   } catch (e) {
     alert('Could not reach API. Make sure the backend is running.\n\n' + e.message);
   } finally {
-    btn.disabled = false;
+    btn.disabled   = false;
     btn.textContent = '⚡ Analyse Transaction';
   }
 }
@@ -530,10 +534,10 @@ function renderResult(data, input) {
   el('result-empty').style.display   = 'none';
   el('result-content').style.display = 'block';
 
-  el('result-prob').className  = 'prob-number ' + tier;
+  el('result-prob').className   = 'prob-number ' + tier;
   el('result-prob').textContent = data.probability_pct;
 
-  el('result-tier').className  = 'tier-badge ' + tier;
+  el('result-tier').className   = 'tier-badge ' + tier;
   el('result-tier').textContent = data.tier + ' RISK';
 
   const gaugeColors = { high: RED, medium: AMBER, low: MINT };
@@ -550,8 +554,8 @@ function renderResult(data, input) {
     const maxAbs = Math.max(...data.shap_waterfall.map(r => Math.abs(r.value)));
     shapWf.innerHTML = data.shap_waterfall.map(r => {
       const pctW = maxAbs > 0 ? Math.abs(r.value) / maxAbs * 100 : 0;
-      const pos = r.value > 0;
-      const col = pos ? RED : MINT;
+      const pos  = r.value > 0;
+      const col  = pos ? RED : MINT;
       return `<div class="shap-row">
         <div class="shap-feat" title="${r.feature}">${r.feature}</div>
         <div class="shap-bar-track">
@@ -599,11 +603,15 @@ function clearHistory() {
 // BUSINESS IMPACT
 // ══════════════════════════════════════════════════════════════════════════════
 function recalcImpact() {
-  if (!THRESH_DATA) return;
+  if (!THRESH_DATA || !MODEL_DATA) return;
   const costFn  = +el('cost-fn').value    || 5.0;
   const costFp  = +el('cost-fp').value    || 0.00005;
   const monthly = +el('monthly-vol').value || 50000;
-  const scale   = monthly / 10000;
+
+  // FIX: use actual test set size from the API instead of hardcoded 10,000
+  // so business impact projections stay correct if the dataset size changes.
+  const testSize = MODEL_DATA.test_set_size || 10000;
+  const scale    = monthly / testSize;
 
   const rows = THRESH_DATA.map(r => ({
     t:      r.threshold,
@@ -626,7 +634,7 @@ function recalcImpact() {
   setText('biz-net',            'M ' + optRow.net.toFixed(1));
   setText('biz-annual-save',    'M ' + (bestSave.s * 12).toFixed(1));
   setText('biz-annual-cost',    'M ' + (optRow.total * 12).toFixed(1));
-  setText('biz-monthly-caught', Math.round(optRow.tp / 10000 * monthly).toLocaleString());
+  setText('biz-monthly-caught', Math.round(optRow.tp / testSize * monthly).toLocaleString());
 
   makeChart('chart-cost', {
     type: 'line',
@@ -654,7 +662,7 @@ function recalcImpact() {
       labels: savingsRows.map(r => r.t),
       datasets: [{
         label: 'Savings vs no-model',
-        data: savingsRows.map(r => r.s),
+        data:  savingsRows.map(r => r.s),
         borderColor: MINT, borderWidth: 1.5,
         fill: true,
         backgroundColor: ctx => {
@@ -676,20 +684,30 @@ function recalcImpact() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// INIT — single entry point, no duplicate boot() at module level
+// INIT — single entry point
 // ══════════════════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   // Set API URL display
-  const urlEl = document.getElementById('api-url-display');
+  const urlEl = el('api-url-display');
   if (urlEl) urlEl.textContent = API_URL;
 
   // Wire up auto-distance
   const homeEl = el('f-home');
   const locEl  = el('f-location');
   if (homeEl) homeEl.addEventListener('change', updateDistance);
-  if (locEl)  locEl.addEventListener('change', updateDistance);
+  if (locEl)  locEl.addEventListener('change',  updateDistance);
   updateDistance();
 
-  // Boot once
+  // FIX: threshold slider listener belongs inside DOMContentLoaded —
+  // was at module level, would silently fail if script were ever moved to <head>.
+  const slider = el('threshold-slider');
+  if (slider) {
+    slider.addEventListener('input', function () {
+      const v = parseFloat(this.value);
+      setText('slider-val-display', v.toFixed(2));
+      updateThresholdMetrics(v);
+    });
+  }
+
   boot();
 });
