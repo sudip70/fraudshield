@@ -197,14 +197,18 @@ def model_info():
     cal   = arts.get("calibration", {})
     thresh = arts["threshold_analysis"]
 
+    best_r = results[best]
     return {
-        "best_name":          best,
-        "comparison":         comparison,
-        "curves":             curves,
-        "confusion_matrix":   results[best]["cm"],
-        "feature_importance": fi_rows,
-        "shap_global":        shap_global,
-        "calibration":        cal,
+        "best_name":                    best,
+        "comparison":                   comparison,
+        "curves":                       curves,
+        # CM at fixed 0.5 threshold (reference) + CM at the model's best-F1 threshold
+        "confusion_matrix":             best_r["cm"],
+        "confusion_matrix_opt":         best_r.get("cm_opt", best_r["cm"]),
+        "confusion_matrix_opt_thresh":  best_r.get("opt_thresh", 0.5),
+        "feature_importance":           fi_rows,
+        "shap_global":                  shap_global,
+        "calibration":                  cal,
         "threshold_analysis": {
             "optimal_f1_threshold":   thresh["optimal_f1_threshold"],
             "optimal_cost_threshold": thresh["optimal_cost_threshold"],

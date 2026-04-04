@@ -191,7 +191,10 @@
 
     <div class="grid-2" style="margin-bottom:14px">
       <div class="card">
-        <div class="card-title">Confusion Matrix — Best Model @ 0.5</div>
+        <div class="card-title">Confusion Matrix — Best Model
+          <span id="cm-thresh-label" style="color:var(--accent);margin-left:6px">@ 0.5</span>
+          <button class="btn-ghost" id="cm-toggle-btn" style="margin-left:auto;font-size:9px" onclick="toggleCM()">Show Optimal Threshold</button>
+        </div>
         <div id="cm-wrap" style="padding:10px 0"><div class="loading"><div class="spinner"></div>Loading…</div></div>
       </div>
       <div class="card">

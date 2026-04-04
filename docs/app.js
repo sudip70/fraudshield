@@ -55,6 +55,7 @@ let MODEL_DATA   = null;
 let THRESH_DATA  = null;
 let scoreHistory = [];
 let charts       = {};
+let _cmShowOpt   = false;   // toggles confusion matrix between 0.5 and optimal threshold
 
 // ── CHART DEFAULTS ────────────────────────────────────────────────────────────
 const GRID  = '#1E2A3A';
@@ -113,6 +114,38 @@ function animCount(element, target, suffix = '', dec = 0) {
     if (p < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
+}
+
+// ── CONFUSION MATRIX HELPERS ──────────────────────────────────────────────────
+function renderCM(cm) {
+  el('cm-wrap').innerHTML = `
+    <div class="cm-grid">
+      <div class="cm-label"></div>
+      <div class="cm-label">Pred Normal</div>
+      <div class="cm-label">Pred Fraud</div>
+      <div class="cm-label">Actual Normal</div>
+      <div class="cm-cell tn">${cm[0][0].toLocaleString()}<div class="cm-cell-type">TN</div></div>
+      <div class="cm-cell fp">${cm[0][1].toLocaleString()}<div class="cm-cell-type">FP</div></div>
+      <div class="cm-label">Actual Fraud</div>
+      <div class="cm-cell fn">${cm[1][0].toLocaleString()}<div class="cm-cell-type">FN</div></div>
+      <div class="cm-cell tp">${cm[1][1].toLocaleString()}<div class="cm-cell-type">TP</div></div>
+    </div>`;
+}
+
+function toggleCM() {
+  if (!MODEL_DATA) return;
+  _cmShowOpt = !_cmShowOpt;
+  const btn   = el('cm-toggle-btn');
+  const label = el('cm-thresh-label');
+  if (_cmShowOpt) {
+    renderCM(MODEL_DATA.confusion_matrix_opt);
+    label.textContent = `@ ${MODEL_DATA.confusion_matrix_opt_thresh} (optimal F1)`;
+    btn.textContent   = 'Show @ 0.5';
+  } else {
+    renderCM(MODEL_DATA.confusion_matrix);
+    label.textContent = '@ 0.5';
+    btn.textContent   = 'Show Optimal Threshold';
+  }
 }
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
@@ -290,7 +323,7 @@ function renderModelCharts(d) {
 
   // Comparison table
   const thead = `<tr>
-    <th>Model</th><th>ROC-AUC</th><th>PR-AUC</th><th>CV AUC (5-fold)</th>
+    <th>Model</th><th>ROC-AUC</th><th>PR-AUC</th><th>CV PR-AUC (5-fold)</th>
     <th>Brier ↓</th><th>Precision</th><th>Recall</th><th>F1</th>
   </tr>`;
   const tbody = d.comparison.map(m => `
@@ -353,20 +386,8 @@ function renderModelCharts(d) {
     },
   });
 
-  // Confusion matrix
-  const cm = d.confusion_matrix;
-  el('cm-wrap').innerHTML = `
-    <div class="cm-grid">
-      <div class="cm-label"></div>
-      <div class="cm-label">Pred Normal</div>
-      <div class="cm-label">Pred Fraud</div>
-      <div class="cm-label">Actual Normal</div>
-      <div class="cm-cell tn">${cm[0][0].toLocaleString()}<div class="cm-cell-type">TN</div></div>
-      <div class="cm-cell fp">${cm[0][1].toLocaleString()}<div class="cm-cell-type">FP</div></div>
-      <div class="cm-label">Actual Fraud</div>
-      <div class="cm-cell fn">${cm[1][0].toLocaleString()}<div class="cm-cell-type">FN</div></div>
-      <div class="cm-cell tp">${cm[1][1].toLocaleString()}<div class="cm-cell-type">TP</div></div>
-    </div>`;
+  // Confusion matrix (default: 0.5 threshold)
+  renderCM(d.confusion_matrix);
 
   // Feature importance
   const fi = [...d.feature_importance].reverse();
@@ -408,8 +429,8 @@ function renderModelCharts(d) {
     <div class="model-card-title">${best.name}</div>
     <strong>DATASET</strong> — 50,000 banking transactions · ${pct(d.fraud_rate)} fraud rate<br>
     <strong>IMBALANCE</strong> — Handled via class weighting / scale_pos_weight<br>
-    <strong>EVALUATION</strong> — Stratified 80/20 split + 5-fold stratified CV<br>
-    <strong>PRIMARY METRIC</strong> — PR-AUC (appropriate for imbalanced classification)<br>
+    <strong>EVALUATION</strong> — Stratified 80/20 split + 5-fold stratified CV (scored on PR-AUC)<br>
+    <strong>PRIMARY METRIC</strong> — PR-AUC (appropriate for imbalanced classification; used for model selection)<br>
     <strong>OPT. THRESHOLD</strong> — ${d.threshold_analysis.optimal_f1_threshold} (F1) · ${d.threshold_analysis.optimal_cost_threshold} (cost-optimal)<br>
     <strong style="color:var(--warning)">LIMITATIONS</strong> — Trained on synthetic data; calibration may drift on real distributions<br>
     <strong style="color:var(--warning)">BIAS CHECK</strong> — No demographic features used — no protected-class risk`;
