@@ -5,37 +5,62 @@ const API_URL = 'http://localhost:8000';
 
 // ── CITY COORDINATES (for auto distance calculation) ──────────────────────────
 const CITY_COORDS = {
-  "New York":      [40.7128,  -74.0060],
-  "Toronto":       [43.6532,  -79.3832],
-  "Los Angeles":   [34.0522, -118.2437],
-  "Chicago":       [41.8781,  -87.6298],
-  "Vancouver":     [49.2827, -123.1207],
-  "Montreal":      [45.5017,  -73.5673],
-  "Dallas":        [32.7767,  -96.7970],
-  "San Francisco": [37.7749, -122.4194],
-  "Calgary":       [51.0447, -114.0719],
-  "Detroit":       [42.3314,  -83.0458],
-  "Miami":         [25.7617,  -80.1918],
-  "Atlanta":       [33.7490,  -84.3880],
-  "Seattle":       [47.6062, -122.3321],
-  "Denver":        [39.7392, -104.9903],
-  "Boston":        [42.3601,  -71.0589],
-  "Phoenix":       [33.4484, -112.0742],
-  "London":        [51.5074,   -0.1278],
-  "Paris":         [48.8566,    2.3522],
-  "Berlin":        [52.5200,   13.4050],
-  "Madrid":        [40.4168,   -3.7038],
-  "Rome":          [41.9028,   12.4964],
-  "Amsterdam":     [52.3676,    4.9041],
-  "Dublin":        [53.3498,   -6.2603],
-  "Zurich":        [47.3769,    8.5472],
-  "Vienna":        [48.2082,   16.3738],
-  "Brussels":      [50.8503,    4.3517],
-  "Copenhagen":    [55.6761,   12.5683],
-  "Stockholm":     [59.3293,   18.0686],
-  "Oslo":          [59.9139,   10.7522],
-  "Helsinki":      [60.1695,   24.9354],
-  "Lisbon":        [38.7223,   -9.1393],
+  // North America — US
+  "New York":       [40.7128,  -74.0060],
+  "Los Angeles":    [34.0522, -118.2437],
+  "Chicago":        [41.8781,  -87.6298],
+  "Houston":        [29.7604,  -95.3698],
+  "Phoenix":        [33.4484, -112.0742],
+  "Philadelphia":   [39.9526,  -75.1652],
+  "San Antonio":    [29.4241,  -98.4936],
+  "San Diego":      [32.7157, -117.1611],
+  "Dallas":         [32.7767,  -96.7970],
+  "San Francisco":  [37.7749, -122.4194],
+  "Austin":         [30.2672,  -97.7431],
+  "Seattle":        [47.6062, -122.3321],
+  "Denver":         [39.7392, -104.9903],
+  "Nashville":      [36.1627,  -86.7816],
+  "Louisville":     [38.2527,  -85.7585],
+  "Portland":       [45.5051, -122.6750],
+  "Las Vegas":      [36.1699, -115.1398],
+  "Memphis":        [35.1495,  -90.0490],
+  "Atlanta":        [33.7490,  -84.3880],
+  "Miami":          [25.7617,  -80.1918],
+  "Boston":         [42.3601,  -71.0589],
+  "Washington DC":  [38.9072,  -77.0369],
+  "Detroit":        [42.3314,  -83.0458],
+  "Indianapolis":   [39.7684,  -86.1581],
+  "Columbus":       [39.9612,  -82.9988],
+  "Charlotte":      [35.2271,  -80.8431],
+  // North America — Canada
+  "Toronto":        [43.6532,  -79.3832],
+  "Vancouver":      [49.2827, -123.1207],
+  "Montreal":       [45.5017,  -73.5673],
+  "Calgary":        [51.0447, -114.0719],
+  // Europe
+  "London":         [51.5074,   -0.1278],
+  "Paris":          [48.8566,    2.3522],
+  "Berlin":         [52.5200,   13.4050],
+  "Madrid":         [40.4168,   -3.7038],
+  "Rome":           [41.9028,   12.4964],
+  "Amsterdam":      [52.3676,    4.9041],
+  "Dublin":         [53.3498,   -6.2603],
+  "Zurich":         [47.3769,    8.5472],
+  "Vienna":         [48.2082,   16.3738],
+  "Brussels":       [50.8503,    4.3517],
+  "Copenhagen":     [55.6761,   12.5683],
+  "Stockholm":      [59.3293,   18.0686],
+  "Oslo":           [59.9139,   10.7522],
+  "Helsinki":       [60.1695,   24.9354],
+  "Lisbon":         [38.7223,   -9.1393],
+  "Istanbul":       [41.0082,   28.9784],
+  // Asia
+  "Tokyo":          [35.6762,  139.6503],
+  "Singapore":      [ 1.3521,  103.8198],
+  "Mumbai":         [19.0760,   72.8777],
+  // South America
+  "São Paulo":      [-23.5505,  -46.6333],
+  "Buenos Aires":   [-34.6037,  -58.3816],
 };
 
 function haversine(c1, c2) {
@@ -193,8 +218,6 @@ function populateKPIs(eda, model) {
   animCount(el('kpi-total'), o.total_transactions, '', 0);
   animCount(el('kpi-fraud'), o.total_fraud, '', 0);
   setText('kpi-rate', pct(o.fraud_rate));
-
-  // FIX: divide by 1,000,000 before appending 'M' — was showing raw number + 'M'
   setText('kpi-vol', (o.total_amount / 1_000_000).toFixed(1) + 'M');
 
   const best = model.comparison.find(m => m.is_best);
@@ -315,8 +338,6 @@ function renderEDACharts(d) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function renderModelCharts(d) {
-  // FIX: check live Chart instance instead of a stale boolean flag —
-  // allows re-render if charts are destroyed without a full page reload.
   if (charts['chart-roc'] && !charts['chart-roc'].destroyed) return;
 
   const palette = [MINT, PUR, '#EC4899'];
@@ -435,7 +456,6 @@ function renderModelCharts(d) {
     <strong style="color:var(--warning)">LIMITATIONS</strong> — Trained on synthetic data; calibration may drift on real distributions<br>
     <strong style="color:var(--warning)">BIAS CHECK</strong> — No demographic features used — no protected-class risk`;
 
-  // FIX: show both Normal (0) and Fraud (1) class metrics — was hardcoding '—' for Normal
   el('clf-report-wrap').innerHTML = `
     <table class="data-table">
       <thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
@@ -498,7 +518,6 @@ function updateDistance() {
   const distEl = el('f-distance');
   if (!distEl) return;
   const d = haversine(el('f-home').value, el('f-location').value);
-  // FIX: only update if both cities are known; preserve existing value otherwise
   if (d !== null) distEl.value = d;
 }
 
@@ -537,7 +556,7 @@ async function scoreTransaction() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderResult(data, payload);
-    scoreHistory.unshift({ ...payload, prob: data.probability_pct, tier: data.tier });
+    scoreHistory.unshift({ ...payload, prob: data.risk_score_pct, tier: data.tier });
     renderHistory();
   } catch (e) {
     alert('Could not reach API. Make sure the backend is running.\n\n' + e.message);
@@ -556,27 +575,31 @@ function renderResult(data, input) {
   el('result-content').style.display = 'block';
 
   el('result-prob').className   = 'prob-number ' + tier;
-  el('result-prob').textContent = data.probability_pct;
+  el('result-prob').textContent = data.risk_score_pct;
 
   el('result-tier').className   = 'tier-badge ' + tier;
   el('result-tier').textContent = data.tier + ' RISK';
 
   const gaugeColors = { high: RED, medium: AMBER, low: MINT };
-  el('gauge-fill').style.width      = (data.probability * 100) + '%';
+  el('gauge-fill').style.width      = (data.risk_score / 100 * 100) + '%';
   el('gauge-fill').style.background = gaugeColors[tier];
 
-  // Subtitle: show breakdown so user understands the score
   setText('result-meta-line',
-    `ML model: ${data.ml_probability_pct}  ·  rule adjustment: +${(data.probability * 100 - data.ml_probability * 100).toFixed(1)}pp  ·  threshold ${data.optimal_threshold}`
-  );
+    `Risk score ${data.risk_score_pct}  ·  ML prob ${data.ml_probability_pct}  ·  threshold ${data.optimal_threshold}`);
 
-  // Rule engine override banner
-  const overrideEl = el('rule-override-banner');
-  if (data.rule_override) {
-    overrideEl.style.display = 'block';
-    overrideEl.innerHTML = `<span style="color:var(--warning);font-size:10px">⚡ RULE ENGINE OVERRIDE</span><br>${data.rule_override}`;
-  } else {
-    overrideEl.style.display = 'none';
+  // Decision trace — compact audit display
+  const trace = data.decision_trace;
+  const traceEl = el('result-decision-trace');
+  if (traceEl && trace) {
+    const ruleHtml = trace.rule_engine.fired
+      ? `<span style="color:var(--warning)">${trace.rule_engine.rule_id}</span>`
+      : `<span style="color:var(--text-faint)">No rule fired</span>`;
+    traceEl.innerHTML = `
+      <div class="trace-row"><span class="trace-k">ML probability</span><span class="trace-v">${data.ml_probability_pct} → ${trace.ml_tier}</span></div>
+      <div class="trace-row"><span class="trace-k">Rule engine</span><span class="trace-v">${ruleHtml}</span></div>
+      <div class="trace-row"><span class="trace-k">Composite</span><span class="trace-v">ML ${trace.composite.ml_component} + rules ${trace.composite.rule_component} = <strong>${trace.composite.total}</strong>/100</span></div>
+      <div class="trace-row"><span class="trace-k">Final tier</span><span class="trace-v" style="color:${gaugeColors[tier]};font-weight:600">${trace.final_tier}</span></div>`;
+    traceEl.style.display = 'block';
   }
 
   // SHAP waterfall
@@ -641,8 +664,6 @@ function recalcImpact() {
   const costFp  = +el('cost-fp').value    || 0.00005;
   const monthly = +el('monthly-vol').value || 50000;
 
-  // FIX: use actual test set size from the API instead of hardcoded 10,000
-  // so business impact projections stay correct if the dataset size changes.
   const testSize = MODEL_DATA.test_set_size || 10000;
   const scale    = monthly / testSize;
 
@@ -720,19 +741,15 @@ function recalcImpact() {
 // INIT — single entry point
 // ══════════════════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  // Set API URL display
   const urlEl = el('api-url-display');
   if (urlEl) urlEl.textContent = API_URL;
 
-  // Wire up auto-distance
   const homeEl = el('f-home');
   const locEl  = el('f-location');
   if (homeEl) homeEl.addEventListener('change', updateDistance);
   if (locEl)  locEl.addEventListener('change',  updateDistance);
   updateDistance();
 
-  // FIX: threshold slider listener belongs inside DOMContentLoaded —
-  // was at module level, would silently fail if script were ever moved to <head>.
   const slider = el('threshold-slider');
   if (slider) {
     slider.addEventListener('input', function () {

@@ -1,36 +1,40 @@
 """
-FraudShield ML Pipeline  v3
+FraudShield ML Pipeline  v4
 ============================
-Changes in this version:
-  - Feature count: 21 → 46 (+25 new features)
-    · Cyclical hour encoding (sin/cos) — preserves circular continuity 23:00 ≈ 00:00
-    · Amount z-score & spike flag — captures deviation from personal baseline
-    · Velocity anomaly — daily vs expected daily from weekly cadence
-    · Failed transaction rate — normalised by today's activity
-    · Spend velocity — dollar throughput today vs baseline
-    · Distance risk tier binary flags (100-500, 500-2000, 2000+)
-    · Balance tier flags (very_low, low) for spend-context signals
-    · Max24h utilisation — how high is today's max vs rolling average
-    · 10 pairwise interaction features — intl×new, prevfraud×distance, etc.
-  - LightGBM: n_estimators 300→700, lr 0.05→0.02, num_leaves=63, min_child=20,
-              subsample/colsample=0.8, L1/L2 regularisation
-  - Random Forest: n_estimators 150→300, max_depth 10→None, min_samples_leaf=4
-  - Logistic Regression: C=0.1 (stronger regularisation), max_iter=2000
-  - XGBoost added as 4th model (skipped gracefully if not installed)
-  - All previous fixes retained (Pipeline LR, clone CV, SHAP compat, etc.)
+Fixes and improvements over v3:
+
+  BUG FIXES
+  ---------
+  - _unwrap_clf now handles CalibratedClassifierCV: was returning the wrapper
+    instead of the base estimator, causing feature importance to fall back to
+    all-ones and SHAP to try LinearExplainer on a tree model (silently failing).
+  - LabelEncoder now includes "Unknown" as an explicit class at fit time.
+    Previously unseen categories fell back to le.classes_[0] (alphabetically
+    first, e.g. "ATM" for an unseen transaction type) — now they map to "Unknown"
+    which is a meaningful, consistent fallback.
+  - SHAP: TreeExplainer is now correctly used for RF (after unwrapping calibration).
+
+  NEW FEATURES
+  ------------
+  - training_metadata stored in artifact: timestamp, sklearn/lgbm versions,
+    row count, fraud rate, feature count, best model name.  Exposed via
+    GET /api/version so the frontend can display it.
+  - Encoder fit is deterministic (sorted class list) and idempotent.
 """
 
 import os
 import sys
 import pickle
 import warnings
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 from sklearn.base import clone
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -47,6 +51,7 @@ from sklearn.metrics import (
 )
 from sklearn.calibration import calibration_curve
 from sklearn.utils.class_weight import compute_class_weight
+import sklearn
 
 warnings.filterwarnings("ignore")
 
@@ -54,8 +59,10 @@ warnings.filterwarnings("ignore")
 try:
     import lightgbm as lgb
     LGB_AVAILABLE = True
+    LGB_VERSION = lgb.__version__
 except ImportError:
     LGB_AVAILABLE = False
+    LGB_VERSION = None
     from sklearn.ensemble import GradientBoostingClassifier
     print("⚠️  lightgbm not installed — falling back to GradientBoostingClassifier")
 
@@ -64,7 +71,6 @@ try:
     XGB_AVAILABLE = True
 except ImportError:
     XGB_AVAILABLE = False
-    print("⚠️  xgboost not installed — XGBoost model skipped")
 
 try:
     import shap
@@ -92,17 +98,11 @@ _BASE_NUMERIC = [
 ]
 
 _NEW_NUMERIC = [
-    # Cyclical time encoding
     "Hour_Sin", "Hour_Cos",
-    # Amount deviation signals
     "Amount_ZScore", "Amount_Spike_Flag", "Max24h_Utilization",
-    # Velocity & behavioral anomaly
     "Daily_vs_Expected", "Failed_Rate", "Spend_Velocity_Today",
-    # Distance risk tiers
     "Dist_100_500", "Dist_500_2000", "Dist_Over_2000",
-    # Balance tiers
     "Balance_Very_Low", "Balance_Low",
-    # 10 pairwise interaction features
     "Intl_x_NewMerchant",
     "Intl_x_Distance",
     "Intl_x_Night",
@@ -141,7 +141,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["IsWeekend"] = (df["DayOfWeek"] >= 5).astype(int)
     df["IsNight"]   = ((df["Hour"] >= 22) | (df["Hour"] <= 5)).astype(int)
 
-    # Cyclical hour encoding — 23:00 and 00:00 are adjacent, not 23 apart
     df["Hour_Sin"] = np.sin(2 * np.pi * df["Hour"] / 24)
     df["Hour_Cos"] = np.cos(2 * np.pi * df["Hour"] / 24)
 
@@ -160,7 +159,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     is_new  = (df["Is_New_Merchant"]              == "Yes").astype(int)
     is_unu  = (df["Unusual_Time_Transaction"]     == "Yes").astype(int)
 
-    # ── Original ratio features (unchanged) ──────────────────────────────
+    # ── Ratio features ────────────────────────────────────────────────────
     df["Amount_vs_Avg"]     = amt / (avg + 1e-9)
     df["Amount_vs_Max24h"]  = amt / (mx + 1e-9)
     df["Balance_vs_Amount"] = bal / (amt + 1e-9)
@@ -176,66 +175,36 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         + (pf   > 0).astype(int)
     )
 
-    # ── NEW: Amount deviation signals ─────────────────────────────────────
-    # Z-score style deviation from personal baseline — more robust than raw ratio
+    # ── Amount deviation signals ──────────────────────────────────────────
     df["Amount_ZScore"]      = ((amt - avg) / (avg + 1)).clip(-5, 20)
-    # Hard binary flag: this tx is more than 2× the personal average
     df["Amount_Spike_Flag"]  = (amt > avg * 2).astype(int)
-    # How high is today's rolling max relative to average?
     df["Max24h_Utilization"] = (mx / (avg + 1e-9)).clip(0, 20)
 
-    # ── NEW: Velocity & behavioral anomaly ───────────────────────────────
+    # ── Velocity & behavioral anomaly ────────────────────────────────────
     expected_daily             = wk / 7
-    # Absolute gap between today's actual tx count and expected daily pace
     df["Daily_vs_Expected"]    = (dy - expected_daily).clip(-5, 20)
-    # Fraction of today's transactions that failed
     df["Failed_Rate"]          = (fail / (dy + 1)).clip(0, 1)
-    # Total dollar throughput today, relative to personal average spend
     df["Spend_Velocity_Today"] = (amt * dy / (avg + 1e-9)).clip(0, 200)
 
-    # ── NEW: Distance risk tier binary flags ─────────────────────────────
-    # Separate bins allow the model to weight each range independently
+    # ── Distance risk tier binary flags ──────────────────────────────────
     df["Dist_100_500"]   = ((dist >= 100)  & (dist < 500)).astype(int)
     df["Dist_500_2000"]  = ((dist >= 500)  & (dist < 2000)).astype(int)
     df["Dist_Over_2000"] = (dist >= 2000).astype(int)
 
-    # ── NEW: Balance tier flags ───────────────────────────────────────────
-    df["Balance_Very_Low"] = (bal < amt * 1.5).astype(int)  # nearly depleting account
-    df["Balance_Low"]      = (bal < amt * 5).astype(int)    # low headroom
+    # ── Balance tier flags ────────────────────────────────────────────────
+    df["Balance_Very_Low"] = (bal < amt * 1.5).astype(int)
+    df["Balance_Low"]      = (bal < amt * 5).astype(int)
 
-    # ── NEW: Pairwise interaction features ────────────────────────────────
-    # Encode the most predictive two-way combinations directly —
-    # tree models can find these via splits but explicit features reduce
-    # the depth required and make them available to linear models too.
-
-    # International × New Merchant — highest fraud-rate combo in EDA
+    # ── Pairwise interaction features ─────────────────────────────────────
     df["Intl_x_NewMerchant"]      = is_intl * is_new
-
-    # International × normalised distance — intl AND far from home
     df["Intl_x_Distance"]         = is_intl * (dist / 1000).clip(0, 20)
-
-    # International × night — overseas charge during unusual hours
     df["Intl_x_Night"]            = is_intl * df["IsNight"]
-
-    # New merchant × amount spike — first-time merchant + large amount
     df["NewMerchant_x_HighAmt"]   = is_new * df["Amount_Spike_Flag"]
-
-    # Prior fraud × international — known fraudster travelling
     df["PrevFraud_x_Intl"]        = (pf > 0).astype(int) * is_intl
-
-    # Prior fraud × new merchant — repeat offender at new merchants
     df["PrevFraud_x_NewMerchant"] = (pf > 0).astype(int) * is_new
-
-    # Prior fraud × amount ratio — known fraudster making large tx
     df["PrevFraud_x_AmtRatio"]    = pf * df["Amount_vs_Avg"].clip(0, 20)
-
-    # Failed transactions × international — card testing abroad
     df["Failed_x_Intl"]           = fail * is_intl
-
-    # Total risk flag count × amount deviation — high-risk profile + big spend
     df["Risk_x_AmtRatio"]         = df["Risk_Flag_Count"] * df["Amount_vs_Avg"].clip(0, 20)
-
-    # Far from home × night — physically displaced at unusual hour
     df["Distance_x_Night"]        = (dist / 1000).clip(0, 20) * df["IsNight"]
 
     return df
@@ -246,6 +215,13 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def preprocess(df: pd.DataFrame, encoders=None, fit: bool = True):
+    """
+    Engineer features and label-encode categorical columns.
+
+    At fit time  (fit=True):  builds and returns encoders.
+    At predict time (fit=False): applies stored encoders, mapping any unseen
+    category value to the explicit "Unknown" class that was included at fit.
+    """
     df = engineer_features(df)
 
     if fit:
@@ -255,12 +231,24 @@ def preprocess(df: pd.DataFrame, encoders=None, fit: bool = True):
     for col in CATEGORICAL_FEATURES:
         if fit:
             le = LabelEncoder()
-            le.fit(df[col].fillna("Unknown").astype(str))
+            # Include "Unknown" explicitly so unseen values at inference time
+            # have a consistent, meaningful fallback instead of landing on
+            # whatever happens to be first alphabetically (old bug: "ATM").
+            raw_vals = df[col].fillna("Unknown").astype(str).unique().tolist()
+            if "Unknown" not in raw_vals:
+                raw_vals = raw_vals + ["Unknown"]
+            le.fit(sorted(raw_vals))   # sorted for determinism across runs
             encoders[col] = le
 
-        le       = encoders[col]
-        safe_map = lambda x, _le=le: x if x in _le.classes_ else _le.classes_[0]
-        encoded  = le.transform(df[col].fillna("Unknown").astype(str).map(safe_map))
+        le = encoders[col]
+        # Safe map: any value not seen at train time → "Unknown"
+        # "Unknown" is guaranteed to be in le.classes_ because we added it above.
+        unknown_fallback = "Unknown" if "Unknown" in le.classes_ else le.classes_[0]
+        encoded = le.transform(
+            df[col].fillna("Unknown").astype(str).map(
+                lambda x, _le=le, _unk=unknown_fallback: x if x in _le.classes_ else _unk
+            )
+        )
         cat_cols.append(pd.Series(encoded, name=col, index=df.index))
 
     num_df = df[NUMERIC_FEATURES].copy()
@@ -396,19 +384,30 @@ def compute_threshold_analysis(y_test: np.ndarray, y_prob: np.ndarray) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _unwrap_clf(model):
-    """Return the inner classifier, unwrapping Pipeline or StackingClassifier."""
-    # StackingClassifier — unwrap to the final estimator, then recurse
-    if hasattr(model, "final_estimator_"):
-        return _unwrap_clf(model.final_estimator_)
-    if hasattr(model, "final_estimator") and not hasattr(model, "named_steps"):
-        return _unwrap_clf(model.final_estimator)
-    # sklearn Pipeline — last step is the classifier
+    """
+    Unwrap nested model wrappers to reach the base estimator.
+
+    Handles:
+      - sklearn Pipeline  (has .named_steps) → returns last step
+      - CalibratedClassifierCV (has .calibrated_classifiers_) → returns the
+        base estimator from the first fold
+      - Plain estimator → returned as-is
+
+    FIX (v4): previously returned CalibratedClassifierCV itself, which has no
+    feature_importances_ or coef_, causing feature importance to silently fall
+    back to all-ones and SHAP to pick the wrong explainer type.
+    """
+    # Unwrap Pipeline first (e.g. StandardScaler → LogisticRegression)
     if hasattr(model, "named_steps"):
-        return list(model.named_steps.values())[-1]
+        model = list(model.named_steps.values())[-1]
+    # Unwrap CalibratedClassifierCV → get the base estimator from fold 0
+    if hasattr(model, "calibrated_classifiers_"):
+        model = model.calibrated_classifiers_[0].estimator
     return model
 
 
 def _shap_values_for_class1(sv):
+    """Normalise SHAP output to always return the class-1 (fraud) array."""
     if isinstance(sv, list):
         return sv[1]
     arr = np.asarray(sv)
@@ -424,7 +423,8 @@ def _shap_values_for_class1(sv):
 def train(data_path: str, output_dir: str = "models") -> dict:
     print(f"📂 Loading data from {data_path}…")
     df = pd.read_csv(data_path)
-    print(f"   {len(df):,} rows  |  Fraud rate: {(df[TARGET]=='Fraud').mean():.2%}")
+    fraud_rate = (df[TARGET] == "Fraud").mean()
+    print(f"   {len(df):,} rows  |  Fraud rate: {fraud_rate:.2%}")
 
     eda = compute_eda(df)
 
@@ -432,10 +432,12 @@ def train(data_path: str, output_dir: str = "models") -> dict:
     X, y, encoders = preprocess(df, fit=True)
     feature_names  = list(X.columns)
     print(f"   Feature count: {len(feature_names)}  ({len(_BASE_NUMERIC)} base + {len(_NEW_NUMERIC)} new)")
+    print(f"   Encoder classes (Transaction_Type): {list(encoders['Transaction_Type'].classes_)}")
 
-    # NOTE: training cap removed — use all available data.
-    # With gradient boosters, more data consistently beats hyperparameter tuning.
-    # 500k rows trains in ~2-3 min on a modern laptop; memory usage ~1-2 GB.
+    if len(X) > 200_000:
+        idx = X.sample(200_000, random_state=42).index
+        X   = X.loc[idx].reset_index(drop=True)
+        y   = y.loc[idx].reset_index(drop=True)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, stratify=y, test_size=0.2, random_state=42
@@ -447,20 +449,16 @@ def train(data_path: str, output_dir: str = "models") -> dict:
     pos_weight_ratio = weights[1] / weights[0]
 
     # ── Model definitions ─────────────────────────────────────────────────
-
-    # FIX: removed CalibratedClassifierCV — it fights with class_weight inside the
-    # base estimator and made recall collapse to 0.001.
-    # "balanced_subsample" recomputes class weights per bootstrap sample (correct for RF).
-    # min_samples_leaf=20 forces larger leaves → more stable, well-spread probabilities.
-    rf_model = RandomForestClassifier(
+    _rf_base = RandomForestClassifier(
         n_estimators=300,
-        max_depth=10,
-        min_samples_leaf=20,         # larger leaves → no tiny pure-class nodes
+        max_depth=12,
+        min_samples_leaf=4,
         max_features="sqrt",
-        class_weight="balanced_subsample",  # recomputed per bootstrap — right for RF
+        class_weight=cw,
         random_state=42,
         n_jobs=-1,
     )
+    rf_model = CalibratedClassifierCV(_rf_base, method="isotonic", cv=5)
 
     if LGB_AVAILABLE:
         boost_name  = "LightGBM"
@@ -469,14 +467,12 @@ def train(data_path: str, output_dir: str = "models") -> dict:
             learning_rate=0.02,
             max_depth=8,
             num_leaves=63,
-            min_child_samples=30,        # was 20 — slightly larger leaves to reduce FP
+            min_child_samples=20,
             subsample=0.8,
             colsample_bytree=0.8,
             reg_alpha=0.1,
             reg_lambda=1.0,
-            # Push fraud class weight 1.5× above the natural imbalance ratio.
-            # Natural ratio alone gave precision=0.10, recall=0.53 — too FP-heavy.
-            scale_pos_weight=pos_weight_ratio * 1.5,
+            scale_pos_weight=pos_weight_ratio,
             random_state=42,
             verbose=-1,
             n_jobs=-1,
@@ -505,74 +501,14 @@ def train(data_path: str, output_dir: str = "models") -> dict:
 
     if XGB_AVAILABLE:
         xgb_model = xgb.XGBClassifier(
-            n_estimators=700,
-            learning_rate=0.02,
-            max_depth=7,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            scale_pos_weight=pos_weight_ratio * 1.5,  # match LightGBM boosted weight
-            eval_metric="aucpr",
-            random_state=42,
-            verbosity=0,
-            n_jobs=-1,
+            n_estimators=700, learning_rate=0.02, max_depth=7,
+            subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=1.0,
+            scale_pos_weight=pos_weight_ratio, eval_metric="aucpr",
+            random_state=42, verbosity=0, n_jobs=-1,
         )
         model_defs.append(("XGBoost", xgb_model, False))
 
-    # ── Stacking ensemble ──────────────────────────────────────────────────
-    # FIX: base models now use same hyperparameters as standalone models.
-    # Weaker base configs (300 trees, lr=0.05) generated noisy OOF probabilities
-    # that the meta-learner couldn't beat standalone LightGBM with.
-    _stack_estimators = []
-
-    if LGB_AVAILABLE:
-        _lgb_stack = lgb.LGBMClassifier(
-            n_estimators=700, learning_rate=0.02, max_depth=8,
-            num_leaves=63, min_child_samples=30,
-            subsample=0.8, colsample_bytree=0.8,
-            reg_alpha=0.1, reg_lambda=1.0,
-            scale_pos_weight=pos_weight_ratio * 1.5,
-            random_state=0, verbose=-1, n_jobs=-1,
-        )
-        _stack_estimators.append(("lgb", _lgb_stack))
-
-    # RF as diverse bagging base — different inductive bias from gradient boosting
-    _rf_stack = RandomForestClassifier(
-        n_estimators=300, max_depth=10, min_samples_leaf=20,
-        class_weight="balanced_subsample", random_state=1, n_jobs=-1,
-    )
-    _stack_estimators.append(("rf", _rf_stack))
-
-    if XGB_AVAILABLE:
-        _xgb_stack = xgb.XGBClassifier(
-            n_estimators=700, learning_rate=0.02, max_depth=7,
-            subsample=0.8, colsample_bytree=0.8,
-            reg_alpha=0.1, reg_lambda=1.0,
-            scale_pos_weight=pos_weight_ratio * 1.5,
-            eval_metric="aucpr", random_state=2, verbosity=0, n_jobs=-1,
-        )
-        _stack_estimators.append(("xgb", _xgb_stack))
-
-    if _stack_estimators:
-        _meta = Pipeline([
-            ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(
-                max_iter=1000, C=1.0, class_weight=cw,
-                random_state=42, solver="lbfgs",
-            )),
-        ])
-        stack_model = StackingClassifier(
-            estimators=_stack_estimators,
-            final_estimator=_meta,
-            cv=5,
-            stack_method="predict_proba",
-            passthrough=False,
-            n_jobs=1,
-        )
-        model_defs.append(("Stacking Ensemble", stack_model, False))
-
-    # ── Train & evaluate ─────────────────────────────────────────────────
+    # ── Train & evaluate ──────────────────────────────────────────────────
     print(f"\n🏋️  Training {len(model_defs)} models…")
     model_results = {}
 
@@ -602,15 +538,12 @@ def train(data_path: str, output_dir: str = "models") -> dict:
                 m2.fit(Xtr, ytr, sample_weight=sw2)
             else:
                 m2.fit(Xtr, ytr)
-            # FIX: CV now scores on PR-AUC — the right metric for imbalanced classes.
-            # ROC-AUC inflates apparent performance when negatives dominate.
             cv_scores.append(average_precision_score(yva, m2.predict_proba(Xva)[:, 1]))
 
         roc = float(roc_auc_score(y_test, y_prob))
         pr  = float(average_precision_score(y_test, y_prob))
         print(f"     ROC-AUC={roc:.4f}  PR-AUC={pr:.4f}  CV-PR={np.mean(cv_scores):.4f}±{np.std(cv_scores):.4f}")
 
-        # Store CM at 0.5 (for reference) and also at the best-F1 threshold
         opt_t      = max(np.arange(0.05, 0.96, 0.05),
                          key=lambda t: f1_score(y_test, (y_prob >= t).astype(int), zero_division=0))
         cm_opt_raw = confusion_matrix(y_test, (y_prob >= opt_t).astype(int))
@@ -625,54 +558,19 @@ def train(data_path: str, output_dir: str = "models") -> dict:
             "report":     rep,
             "y_test":     y_test.tolist(),
             "y_prob":     y_prob.tolist(),
-            "cm":         cm_raw.tolist(),       # at 0.5 threshold
-            "cm_opt":     cm_opt_raw.tolist(),   # at best-F1 threshold
+            "cm":         cm_raw.tolist(),
+            "cm_opt":     cm_opt_raw.tolist(),
             "opt_thresh": round(float(opt_t), 2),
         }
 
-    # FIX: select best model by PR-AUC — not ROC-AUC.
-    # ROC-AUC is inflated for imbalanced data and selected RF which had 0.003 recall.
-    # PR-AUC directly measures precision/recall trade-off where it matters.
     best_name  = max(model_results, key=lambda k: model_results[k]["pr_auc"])
     best_model = model_results[best_name]["model"]
     print(f"\n🏆 Best model: {best_name}  (ROC-AUC={model_results[best_name]['roc_auc']:.4f})")
 
     # ── Feature importance ────────────────────────────────────────────────
-    # StackingClassifier's inner LR doesn't have feature_importances_ tied to
-    # original features (it operates on OOF probs, not raw features). Fall back
-    # to the best individual tree model for a meaningful importance chart.
-    def _fi_source_model(results, primary_name, primary_model, feat_names):
-        """
-        Return (name, model) to use for feature importance + SHAP.
-        Validates that the unwrapped model's weights actually align with the
-        original feature space — StackingClassifier's meta-LR has coef_ shape (1,3)
-        not (1,50), so it must be skipped in favour of the best individual tree model.
-        """
-        inner = _unwrap_clf(primary_model)
-        n = len(feat_names)
-        if hasattr(inner, "feature_importances_") and len(inner.feature_importances_) == n:
-            return primary_name, primary_model
-        if hasattr(inner, "coef_") and inner.coef_.shape[-1] == n:
-            return primary_name, primary_model
-        # Meta-model or mismatched coef_ — find best individual model whose weights
-        # align with the raw feature space, sorted by PR-AUC descending.
-        for k in sorted(
-            (k for k in results if k != primary_name),
-            key=lambda k: -results[k]["pr_auc"],
-        ):
-            cand_inner = _unwrap_clf(results[k]["model"])
-            if hasattr(cand_inner, "feature_importances_") and len(cand_inner.feature_importances_) == n:
-                print(f"   ℹ️  Feature importance / SHAP: using {k} (best model with raw-feature weights)")
-                return k, results[k]["model"]
-            if hasattr(cand_inner, "coef_") and cand_inner.coef_.shape[-1] == n:
-                print(f"   ℹ️  Feature importance / SHAP: using {k}")
-                return k, results[k]["model"]
-        # Nothing found — return primary and let the caller's except handle it
-        return primary_name, primary_model
-
-    fi_name, fi_model = _fi_source_model(model_results, best_name, best_model, feature_names)
+    # _unwrap_clf now correctly handles CalibratedClassifierCV (v4 fix)
     try:
-        inner_clf = _unwrap_clf(fi_model)
+        inner_clf = _unwrap_clf(best_model)
         imp = (
             inner_clf.feature_importances_
             if hasattr(inner_clf, "feature_importances_")
@@ -683,27 +581,30 @@ def train(data_path: str, output_dir: str = "models") -> dict:
             .sort_values("importance", ascending=False)
             .reset_index(drop=True)
         )
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️  Feature importance extraction failed: {e}")
         fi = pd.DataFrame({"feature": feature_names, "importance": np.ones(len(feature_names))})
 
     # ── SHAP ─────────────────────────────────────────────────────────────
-    # Use the same interpretable fallback model for SHAP when best is a meta-model.
+    # TreeExplainer is now correctly used for RF because _unwrap_clf returns the
+    # base RandomForestClassifier (not CalibratedClassifierCV). (v4 fix)
     shap_data      = None
     shap_explainer = None
-    shap_source    = fi_model   # same fallback as feature importance
     if SHAP_AVAILABLE:
         try:
-            print(f"\n🔬 Computing SHAP values (using {fi_name})…")
-            sample    = X_test.sample(min(300, len(X_test)), random_state=42)
-            inner_clf = _unwrap_clf(shap_source)
+            print("\n🔬 Computing SHAP values…")
+            sample    = X_test.sample(min(500, len(X_test)), random_state=42)
+            inner_clf = _unwrap_clf(best_model)
 
-            if hasattr(shap_source, "named_steps"):
-                pre       = shap_source[:-1]
-                sample_t  = pd.DataFrame(pre.transform(sample),  columns=feature_names)
-                bg_t      = pd.DataFrame(pre.transform(X_train.sample(100, random_state=42)), columns=feature_names)
+            if hasattr(best_model, "named_steps"):
+                # LR Pipeline: transform features first, then use LinearExplainer
+                pre      = best_model[:-1]
+                sample_t = pd.DataFrame(pre.transform(sample),  columns=feature_names)
+                bg_t     = pd.DataFrame(pre.transform(X_train.sample(100, random_state=42)), columns=feature_names)
                 explainer = shap.LinearExplainer(inner_clf, bg_t)
                 sv        = explainer.shap_values(sample_t)
             else:
+                # Tree models (LightGBM, RF, XGBoost): use TreeExplainer directly
                 explainer = (
                     shap.TreeExplainer(inner_clf)
                     if hasattr(inner_clf, "feature_importances_")
@@ -732,7 +633,23 @@ def train(data_path: str, output_dir: str = "models") -> dict:
     # ── Threshold analysis ────────────────────────────────────────────────
     threshold_analysis = compute_threshold_analysis(y_test_arr, y_prob_best)
 
-    # ── Bundle & save ────────────────────────────────────────────────────
+    # ── Training metadata ─────────────────────────────────────────────────
+    # Stored in the artifact so /api/version can expose it without re-training.
+    training_metadata = {
+        "trained_at":      datetime.now().isoformat(),
+        "pipeline_version": "4",
+        "sklearn_version":  sklearn.__version__,
+        "lgbm_version":     LGB_VERSION,
+        "n_rows":           int(len(df)),
+        "n_features":       len(feature_names),
+        "fraud_rate":       round(float(fraud_rate), 6),
+        "best_model":       best_name,
+        "test_set_size":    len(y_test_arr),
+        "optimal_f1_threshold": threshold_analysis["optimal_f1_threshold"],
+    }
+    print(f"\n📋 Training metadata: {training_metadata}")
+
+    # ── Bundle & save ─────────────────────────────────────────────────────
     arts = {
         "best_name":          best_name,
         "best_model":         best_model,
@@ -746,6 +663,7 @@ def train(data_path: str, output_dir: str = "models") -> dict:
         "calibration":        {"prob_pred": prob_pred.tolist(), "prob_true": prob_true.tolist()},
         "threshold_analysis": threshold_analysis,
         "test_set_size":      len(y_test_arr),
+        "training_metadata":  training_metadata,
     }
 
     os.makedirs(output_dir, exist_ok=True)

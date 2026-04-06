@@ -8,6 +8,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <link rel="stylesheet" href="style.css">
+<style>
+.trace-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:10px}
+.trace-row:last-child{border-bottom:none}
+.trace-k{color:var(--text-faint);text-transform:uppercase;letter-spacing:.08em;flex-shrink:0;margin-right:12px}
+.trace-v{color:var(--text);text-align:right}
+</style>
 </head>
 <body>
 
@@ -270,57 +276,165 @@
             <div class="field"><label>Account Balance ($)</label><input type="number" id="f-balance" value="20000" min="0" max="100000" step="1000"></div>
             <div class="field">
               <label>Distance from Home (km) <span style="color:var(--accent);font-size:9px">auto</span></label>
-              <input type="number" id="f-distance" value="0" min="0" max="15000" readonly style="opacity:0.6;cursor:not-allowed">
+              <input type="number" id="f-distance" value="0" min="0" max="20000" readonly style="opacity:0.6;cursor:not-allowed">
             </div>
             <div class="field"><label>Time (HH:MM)</label><input type="text" id="f-time" value="14:30"></div>
+
+            <!-- Transaction Type — includes Wire Transfer from data -->
             <div class="field">
               <label>Transaction Type</label>
-              <select id="f-type"><option>Online</option><option>ATM</option><option>POS</option></select>
+              <select id="f-type">
+                <option>Online</option>
+                <option>ATM</option>
+                <option>POS</option>
+                <option>Wire Transfer</option>
+              </select>
             </div>
+
+            <!-- Merchant Category — full list from data -->
             <div class="field">
               <label>Merchant Category</label>
               <select id="f-merchant">
-                <option>Restaurant</option><option>ATM</option><option>Fuel</option>
-                <option>Clothing</option><option>Grocery</option><option>Electronics</option>
+                <option>Airlines</option>
+                <option>ATM</option>
+                <option>Clothing</option>
+                <option>Electronics</option>
+                <option>Entertainment</option>
+                <option>Fuel</option>
+                <option>Grocery</option>
+                <option>Healthcare</option>
+                <option>Hotel</option>
+                <option>Jewelry</option>
+                <option>Online Shopping</option>
+                <option>Pharmacy</option>
+                <option selected>Restaurant</option>
+                <option>Travel</option>
               </select>
             </div>
+
+            <!-- Card Type — includes Prepaid from data -->
             <div class="field">
               <label>Card Type</label>
-              <select id="f-card"><option>Debit</option><option>Credit</option></select>
-            </div>
-            <div class="field">
-              <!-- FIX: Transaction Location defaults to "London" (vs home "New York")
-                   so the auto-computed distance is non-zero on page load, giving
-                   the user an informative starting state. -->
-              <label>Transaction Location</label>
-              <select id="f-location">
-                <option>New York</option><option>Toronto</option><option>Los Angeles</option>
-                <option>Chicago</option><option>Vancouver</option><option>Montreal</option>
-                <option>Dallas</option><option>San Francisco</option><option>Calgary</option>
-                <option>Detroit</option><option>Miami</option><option>Atlanta</option>
-                <option>Seattle</option><option>Denver</option><option>Boston</option>
-                <option>Phoenix</option><option selected>London</option><option>Paris</option>
-                <option>Berlin</option><option>Madrid</option><option>Rome</option>
-                <option>Amsterdam</option><option>Dublin</option><option>Zurich</option>
-                <option>Vienna</option><option>Brussels</option><option>Copenhagen</option>
-                <option>Stockholm</option><option>Oslo</option><option>Helsinki</option>
-                <option>Lisbon</option>
+              <select id="f-card">
+                <option>Debit</option>
+                <option>Credit</option>
+                <option>Prepaid</option>
               </select>
             </div>
+
+            <!-- Transaction Location — full city list from data -->
+            <div class="field">
+              <label>Transaction Location</label>
+              <select id="f-location">
+                <option>New York</option>
+                <option>Los Angeles</option>
+                <option>Chicago</option>
+                <option>Houston</option>
+                <option>Phoenix</option>
+                <option>Philadelphia</option>
+                <option>San Antonio</option>
+                <option>San Diego</option>
+                <option>Dallas</option>
+                <option>San Francisco</option>
+                <option>Austin</option>
+                <option>Seattle</option>
+                <option>Denver</option>
+                <option>Nashville</option>
+                <option>Louisville</option>
+                <option>Portland</option>
+                <option>Las Vegas</option>
+                <option>Memphis</option>
+                <option>Atlanta</option>
+                <option>Miami</option>
+                <option>Boston</option>
+                <option>Washington DC</option>
+                <option>Detroit</option>
+                <option>Indianapolis</option>
+                <option>Columbus</option>
+                <option>Charlotte</option>
+                <option>Toronto</option>
+                <option>Vancouver</option>
+                <option>Montreal</option>
+                <option>Calgary</option>
+                <option selected>London</option>
+                <option>Paris</option>
+                <option>Berlin</option>
+                <option>Madrid</option>
+                <option>Rome</option>
+                <option>Amsterdam</option>
+                <option>Dublin</option>
+                <option>Zurich</option>
+                <option>Vienna</option>
+                <option>Brussels</option>
+                <option>Copenhagen</option>
+                <option>Stockholm</option>
+                <option>Oslo</option>
+                <option>Helsinki</option>
+                <option>Lisbon</option>
+                <option>Istanbul</option>
+                <option>Tokyo</option>
+                <option>Singapore</option>
+                <option>Mumbai</option>
+                <option>São Paulo</option>
+                <option>Buenos Aires</option>
+              </select>
+            </div>
+
+            <!-- Home Location — full city list from data -->
             <div class="field">
               <label>Home Location</label>
               <select id="f-home">
-                <option selected>New York</option><option>Toronto</option><option>Los Angeles</option>
-                <option>Chicago</option><option>Vancouver</option><option>Montreal</option>
-                <option>Dallas</option><option>San Francisco</option><option>Calgary</option>
-                <option>Detroit</option><option>Miami</option><option>Atlanta</option>
-                <option>Seattle</option><option>Denver</option><option>Boston</option>
-                <option>Phoenix</option><option>London</option><option>Paris</option>
-                <option>Berlin</option><option>Madrid</option><option>Rome</option>
-                <option>Amsterdam</option><option>Dublin</option><option>Zurich</option>
-                <option>Vienna</option><option>Brussels</option><option>Copenhagen</option>
-                <option>Stockholm</option><option>Oslo</option><option>Helsinki</option>
+                <option selected>New York</option>
+                <option>Los Angeles</option>
+                <option>Chicago</option>
+                <option>Houston</option>
+                <option>Phoenix</option>
+                <option>Philadelphia</option>
+                <option>San Antonio</option>
+                <option>San Diego</option>
+                <option>Dallas</option>
+                <option>San Francisco</option>
+                <option>Austin</option>
+                <option>Seattle</option>
+                <option>Denver</option>
+                <option>Nashville</option>
+                <option>Louisville</option>
+                <option>Portland</option>
+                <option>Las Vegas</option>
+                <option>Memphis</option>
+                <option>Atlanta</option>
+                <option>Miami</option>
+                <option>Boston</option>
+                <option>Washington DC</option>
+                <option>Detroit</option>
+                <option>Indianapolis</option>
+                <option>Columbus</option>
+                <option>Charlotte</option>
+                <option>Toronto</option>
+                <option>Vancouver</option>
+                <option>Montreal</option>
+                <option>Calgary</option>
+                <option>London</option>
+                <option>Paris</option>
+                <option>Berlin</option>
+                <option>Madrid</option>
+                <option>Rome</option>
+                <option>Amsterdam</option>
+                <option>Dublin</option>
+                <option>Zurich</option>
+                <option>Vienna</option>
+                <option>Brussels</option>
+                <option>Copenhagen</option>
+                <option>Stockholm</option>
+                <option>Oslo</option>
+                <option>Helsinki</option>
                 <option>Lisbon</option>
+                <option>Istanbul</option>
+                <option>Tokyo</option>
+                <option>Singapore</option>
+                <option>Mumbai</option>
+                <option>São Paulo</option>
+                <option>Buenos Aires</option>
               </select>
             </div>
           </div>
@@ -333,8 +447,8 @@
             <div class="field"><label>Weekly Tx</label><input type="number" id="f-weekly" value="10" min="1" max="24"></div>
             <div class="field"><label>Avg Amount ($)</label><input type="number" id="f-avg" value="3000" min="1" max="50000" step="100"></div>
             <div class="field"><label>Max 24h ($)</label><input type="number" id="f-max24" value="4000" min="1" max="90000" step="100"></div>
-            <div class="field"><label>Failed Tx</label><input type="number" id="f-failed" value="0" min="0" max="2"></div>
-            <div class="field"><label>Prev Fraud</label><input type="number" id="f-prevfraud" value="0" min="0" max="1"></div>
+            <div class="field"><label>Failed Tx</label><input type="number" id="f-failed" value="0" min="0" max="5"></div>
+            <div class="field"><label>Prev Fraud</label><input type="number" id="f-prevfraud" value="0" min="0" max="5"></div>
           </div>
         </div>
 
@@ -367,12 +481,14 @@
             <div class="result-empty-text">Fill in the transaction<br>details and click Analyse</div>
           </div>
           <div id="result-content" style="display:none">
-            <div class="prob-label">Fraud Probability (Rule-Adjusted)</div>
+            <div class="prob-label">Fraud Probability</div>
             <div class="prob-number" id="result-prob">—</div>
             <div><span class="tier-badge" id="result-tier">—</span></div>
             <div class="gauge-track"><div class="gauge-fill" id="gauge-fill" style="width:0%"></div></div>
             <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-faint)" id="result-meta-line">—</div>
-            <div id="rule-override-banner" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(232,160,32,0.07);border:1px solid rgba(232,160,32,0.25);border-left:2px solid var(--warning);border-radius:4px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);line-height:1.8"></div>
+
+            <div class="flags-title">Decision trace</div>
+            <div id="result-decision-trace" style="display:none;margin:0 0 14px;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-sm);"></div>
 
             <div id="shap-section" style="display:none">
               <div class="flags-title">Why this score? (SHAP)</div>
