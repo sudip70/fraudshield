@@ -1,5 +1,5 @@
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://fraudshield-cv7g.onrender.com';
 // Production: const API_URL = 'https://fraudshield-api.onrender.com';
 // ─────────────────────────────────────────────────────────────────────────────
 
