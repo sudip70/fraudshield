@@ -1,28 +1,27 @@
+# render.yaml
 services:
   - type: web
     name: fraudshield-api
     env: python
     plan: free
-
     buildCommand: >
       pip install -r backend/requirements.txt &&
-      git lfs install &&
-      git lfs pull &&
       python -c "
-import os, subprocess, sys
-
-model_path = 'models/model.pkl'
-
-if not os.path.exists(model_path):
-    print('Model artifact not found — training now...')
-    result = subprocess.run([sys.executable, 'src/pipeline.py', 'data/FraudShield_Banking_Data.csv'])
-    sys.exit(result.returncode)
-else:
-    print('Model artifact found — skipping training.')
-"
-
+      import os, subprocess, sys
+      if not os.path.exists('models/model.pkl'):
+          print('Model artifact not found — training now...')
+          result = subprocess.run([sys.executable, 'src/pipeline.py', 'data/FraudShield_Banking_Data.csv'])
+          sys.exit(result.returncode)
+      else:
+          print('Model artifact found — skipping training.')
+      "
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
+      - key: ARTIFACT_PATH
+        value: "models/model.pkl"
+      - key: CORS_ORIGINS
+        value: "https://yourusername.github.io"
+      - key: LOG_LEVEL
+        value: "INFO"
