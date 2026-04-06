@@ -367,11 +367,12 @@
             <div class="result-empty-text">Fill in the transaction<br>details and click Analyse</div>
           </div>
           <div id="result-content" style="display:none">
-            <div class="prob-label">Fraud Probability</div>
+            <div class="prob-label">Fraud Probability (Rule-Adjusted)</div>
             <div class="prob-number" id="result-prob">—</div>
             <div><span class="tier-badge" id="result-tier">—</span></div>
             <div class="gauge-track"><div class="gauge-fill" id="gauge-fill" style="width:0%"></div></div>
             <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-faint)" id="result-meta-line">—</div>
+            <div id="rule-override-banner" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(232,160,32,0.07);border:1px solid rgba(232,160,32,0.25);border-left:2px solid var(--warning);border-radius:4px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);line-height:1.8"></div>
 
             <div id="shap-section" style="display:none">
               <div class="flags-title">Why this score? (SHAP)</div>

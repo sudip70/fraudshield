@@ -565,7 +565,19 @@ function renderResult(data, input) {
   el('gauge-fill').style.width      = (data.probability * 100) + '%';
   el('gauge-fill').style.background = gaugeColors[tier];
 
-  setText('result-meta-line', `${data.probability_pct}  ·  optimal threshold ${data.optimal_threshold}`);
+  // Subtitle: show breakdown so user understands the score
+  setText('result-meta-line',
+    `ML model: ${data.ml_probability_pct}  ·  rule adjustment: +${(data.probability * 100 - data.ml_probability * 100).toFixed(1)}pp  ·  threshold ${data.optimal_threshold}`
+  );
+
+  // Rule engine override banner
+  const overrideEl = el('rule-override-banner');
+  if (data.rule_override) {
+    overrideEl.style.display = 'block';
+    overrideEl.innerHTML = `<span style="color:var(--warning);font-size:10px">⚡ RULE ENGINE OVERRIDE</span><br>${data.rule_override}`;
+  } else {
+    overrideEl.style.display = 'none';
+  }
 
   // SHAP waterfall
   const shapSec = el('shap-section');

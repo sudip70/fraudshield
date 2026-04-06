@@ -30,8 +30,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from sklearn.base import clone
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -397,6 +396,13 @@ def compute_threshold_analysis(y_test: np.ndarray, y_prob: np.ndarray) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _unwrap_clf(model):
+    """Return the inner classifier, unwrapping Pipeline or StackingClassifier."""
+    # StackingClassifier — unwrap to the final estimator, then recurse
+    if hasattr(model, "final_estimator_"):
+        return _unwrap_clf(model.final_estimator_)
+    if hasattr(model, "final_estimator") and not hasattr(model, "named_steps"):
+        return _unwrap_clf(model.final_estimator)
+    # sklearn Pipeline — last step is the classifier
     if hasattr(model, "named_steps"):
         return list(model.named_steps.values())[-1]
     return model
@@ -427,10 +433,9 @@ def train(data_path: str, output_dir: str = "models") -> dict:
     feature_names  = list(X.columns)
     print(f"   Feature count: {len(feature_names)}  ({len(_BASE_NUMERIC)} base + {len(_NEW_NUMERIC)} new)")
 
-    if len(X) > 200_000:
-        idx = X.sample(200_000, random_state=42).index
-        X   = X.loc[idx].reset_index(drop=True)
-        y   = y.loc[idx].reset_index(drop=True)
+    # NOTE: training cap removed — use all available data.
+    # With gradient boosters, more data consistently beats hyperparameter tuning.
+    # 500k rows trains in ~2-3 min on a modern laptop; memory usage ~1-2 GB.
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, stratify=y, test_size=0.2, random_state=42
@@ -443,19 +448,19 @@ def train(data_path: str, output_dir: str = "models") -> dict:
 
     # ── Model definitions ─────────────────────────────────────────────────
 
-    # FIX: max_depth=None produced badly compressed probabilities — almost every
-    # transaction scored near 0, giving excellent AUC rankings but 0.003 recall
-    # at any usable threshold. Capping depth + isotonic calibration corrects this.
-    _rf_base = RandomForestClassifier(
+    # FIX: removed CalibratedClassifierCV — it fights with class_weight inside the
+    # base estimator and made recall collapse to 0.001.
+    # "balanced_subsample" recomputes class weights per bootstrap sample (correct for RF).
+    # min_samples_leaf=20 forces larger leaves → more stable, well-spread probabilities.
+    rf_model = RandomForestClassifier(
         n_estimators=300,
-        max_depth=12,            # restored depth cap — uncapped RF compresses P(fraud)→0
-        min_samples_leaf=4,
+        max_depth=10,
+        min_samples_leaf=20,         # larger leaves → no tiny pure-class nodes
         max_features="sqrt",
-        class_weight=cw,
+        class_weight="balanced_subsample",  # recomputed per bootstrap — right for RF
         random_state=42,
         n_jobs=-1,
     )
-    rf_model = CalibratedClassifierCV(_rf_base, method="isotonic", cv=5)
 
     if LGB_AVAILABLE:
         boost_name  = "LightGBM"
@@ -463,13 +468,15 @@ def train(data_path: str, output_dir: str = "models") -> dict:
             n_estimators=700,
             learning_rate=0.02,
             max_depth=8,
-            num_leaves=63,           # 2^(max_depth-1) — controls model complexity
-            min_child_samples=20,    # prevents tiny leaf overfitting
-            subsample=0.8,           # row subsampling
-            colsample_bytree=0.8,    # feature subsampling
-            reg_alpha=0.1,           # L1
-            reg_lambda=1.0,          # L2
-            scale_pos_weight=pos_weight_ratio,
+            num_leaves=63,
+            min_child_samples=30,        # was 20 — slightly larger leaves to reduce FP
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            # Push fraud class weight 1.5× above the natural imbalance ratio.
+            # Natural ratio alone gave precision=0.10, recall=0.53 — too FP-heavy.
+            scale_pos_weight=pos_weight_ratio * 1.5,
             random_state=42,
             verbose=-1,
             n_jobs=-1,
@@ -485,7 +492,7 @@ def train(data_path: str, output_dir: str = "models") -> dict:
     lr_pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(
-            max_iter=2000, C=0.1,    # stronger regularisation: C=0.1 vs default C=1
+            max_iter=2000, C=0.1,
             class_weight=cw, random_state=42, solver="lbfgs",
         )),
     ])
@@ -505,13 +512,65 @@ def train(data_path: str, output_dir: str = "models") -> dict:
             colsample_bytree=0.8,
             reg_alpha=0.1,
             reg_lambda=1.0,
-            scale_pos_weight=pos_weight_ratio,
+            scale_pos_weight=pos_weight_ratio * 1.5,  # match LightGBM boosted weight
             eval_metric="aucpr",
             random_state=42,
             verbosity=0,
             n_jobs=-1,
         )
         model_defs.append(("XGBoost", xgb_model, False))
+
+    # ── Stacking ensemble ──────────────────────────────────────────────────
+    # FIX: base models now use same hyperparameters as standalone models.
+    # Weaker base configs (300 trees, lr=0.05) generated noisy OOF probabilities
+    # that the meta-learner couldn't beat standalone LightGBM with.
+    _stack_estimators = []
+
+    if LGB_AVAILABLE:
+        _lgb_stack = lgb.LGBMClassifier(
+            n_estimators=700, learning_rate=0.02, max_depth=8,
+            num_leaves=63, min_child_samples=30,
+            subsample=0.8, colsample_bytree=0.8,
+            reg_alpha=0.1, reg_lambda=1.0,
+            scale_pos_weight=pos_weight_ratio * 1.5,
+            random_state=0, verbose=-1, n_jobs=-1,
+        )
+        _stack_estimators.append(("lgb", _lgb_stack))
+
+    # RF as diverse bagging base — different inductive bias from gradient boosting
+    _rf_stack = RandomForestClassifier(
+        n_estimators=300, max_depth=10, min_samples_leaf=20,
+        class_weight="balanced_subsample", random_state=1, n_jobs=-1,
+    )
+    _stack_estimators.append(("rf", _rf_stack))
+
+    if XGB_AVAILABLE:
+        _xgb_stack = xgb.XGBClassifier(
+            n_estimators=700, learning_rate=0.02, max_depth=7,
+            subsample=0.8, colsample_bytree=0.8,
+            reg_alpha=0.1, reg_lambda=1.0,
+            scale_pos_weight=pos_weight_ratio * 1.5,
+            eval_metric="aucpr", random_state=2, verbosity=0, n_jobs=-1,
+        )
+        _stack_estimators.append(("xgb", _xgb_stack))
+
+    if _stack_estimators:
+        _meta = Pipeline([
+            ("scaler", StandardScaler()),
+            ("lr", LogisticRegression(
+                max_iter=1000, C=1.0, class_weight=cw,
+                random_state=42, solver="lbfgs",
+            )),
+        ])
+        stack_model = StackingClassifier(
+            estimators=_stack_estimators,
+            final_estimator=_meta,
+            cv=5,
+            stack_method="predict_proba",
+            passthrough=False,
+            n_jobs=1,
+        )
+        model_defs.append(("Stacking Ensemble", stack_model, False))
 
     # ── Train & evaluate ─────────────────────────────────────────────────
     print(f"\n🏋️  Training {len(model_defs)} models…")
@@ -579,8 +638,41 @@ def train(data_path: str, output_dir: str = "models") -> dict:
     print(f"\n🏆 Best model: {best_name}  (ROC-AUC={model_results[best_name]['roc_auc']:.4f})")
 
     # ── Feature importance ────────────────────────────────────────────────
+    # StackingClassifier's inner LR doesn't have feature_importances_ tied to
+    # original features (it operates on OOF probs, not raw features). Fall back
+    # to the best individual tree model for a meaningful importance chart.
+    def _fi_source_model(results, primary_name, primary_model, feat_names):
+        """
+        Return (name, model) to use for feature importance + SHAP.
+        Validates that the unwrapped model's weights actually align with the
+        original feature space — StackingClassifier's meta-LR has coef_ shape (1,3)
+        not (1,50), so it must be skipped in favour of the best individual tree model.
+        """
+        inner = _unwrap_clf(primary_model)
+        n = len(feat_names)
+        if hasattr(inner, "feature_importances_") and len(inner.feature_importances_) == n:
+            return primary_name, primary_model
+        if hasattr(inner, "coef_") and inner.coef_.shape[-1] == n:
+            return primary_name, primary_model
+        # Meta-model or mismatched coef_ — find best individual model whose weights
+        # align with the raw feature space, sorted by PR-AUC descending.
+        for k in sorted(
+            (k for k in results if k != primary_name),
+            key=lambda k: -results[k]["pr_auc"],
+        ):
+            cand_inner = _unwrap_clf(results[k]["model"])
+            if hasattr(cand_inner, "feature_importances_") and len(cand_inner.feature_importances_) == n:
+                print(f"   ℹ️  Feature importance / SHAP: using {k} (best model with raw-feature weights)")
+                return k, results[k]["model"]
+            if hasattr(cand_inner, "coef_") and cand_inner.coef_.shape[-1] == n:
+                print(f"   ℹ️  Feature importance / SHAP: using {k}")
+                return k, results[k]["model"]
+        # Nothing found — return primary and let the caller's except handle it
+        return primary_name, primary_model
+
+    fi_name, fi_model = _fi_source_model(model_results, best_name, best_model, feature_names)
     try:
-        inner_clf = _unwrap_clf(best_model)
+        inner_clf = _unwrap_clf(fi_model)
         imp = (
             inner_clf.feature_importances_
             if hasattr(inner_clf, "feature_importances_")
@@ -595,18 +687,20 @@ def train(data_path: str, output_dir: str = "models") -> dict:
         fi = pd.DataFrame({"feature": feature_names, "importance": np.ones(len(feature_names))})
 
     # ── SHAP ─────────────────────────────────────────────────────────────
+    # Use the same interpretable fallback model for SHAP when best is a meta-model.
     shap_data      = None
     shap_explainer = None
+    shap_source    = fi_model   # same fallback as feature importance
     if SHAP_AVAILABLE:
         try:
-            print("\n🔬 Computing SHAP values…")
+            print(f"\n🔬 Computing SHAP values (using {fi_name})…")
             sample    = X_test.sample(min(300, len(X_test)), random_state=42)
-            inner_clf = _unwrap_clf(best_model)
+            inner_clf = _unwrap_clf(shap_source)
 
-            if hasattr(best_model, "named_steps"):
-                pre      = best_model[:-1]
-                sample_t = pd.DataFrame(pre.transform(sample),  columns=feature_names)
-                bg_t     = pd.DataFrame(pre.transform(X_train.sample(100, random_state=42)), columns=feature_names)
+            if hasattr(shap_source, "named_steps"):
+                pre       = shap_source[:-1]
+                sample_t  = pd.DataFrame(pre.transform(sample),  columns=feature_names)
+                bg_t      = pd.DataFrame(pre.transform(X_train.sample(100, random_state=42)), columns=feature_names)
                 explainer = shap.LinearExplainer(inner_clf, bg_t)
                 sv        = explainer.shap_values(sample_t)
             else:
