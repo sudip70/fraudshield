@@ -1,4 +1,11 @@
-# 🛡️ FraudShield - Web Edition
+# 🛡️ FraudShield 
+Fraud Monitoring dashboard with Live fraud detection and business impact calculator.
+
+**Demo:** 
+<p align="center">
+  <img src="fraudshield_demo.gif" width="600"/>
+</p>
+---
 
 HTML/CSS/JS frontend on **GitHub Pages** + FastAPI backend on **Render**.
 
