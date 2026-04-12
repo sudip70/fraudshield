@@ -112,6 +112,39 @@ const API_URL = 'https://your-service-name.onrender.com';
 
 ---
 
+## Optional — Wake the Render API every day
+
+This repo includes a GitHub Actions workflow at `.github/workflows/wake-render.yml`
+that pings `/api/health` once per day at `13:00 UTC`.
+
+By default, `scripts/wake_render.sh` targets:
+
+```bash
+https://fraudshield-cv7g.onrender.com/api/health
+```
+
+If your Render URL is different, set a GitHub repository variable named
+`RENDER_HEALTHCHECK_URL` to your own health endpoint, for example:
+
+```text
+https://your-service-name.onrender.com/api/health
+```
+
+You can also run the script locally:
+
+```bash
+bash scripts/wake_render.sh
+# or
+RENDER_HEALTHCHECK_URL=https://your-service-name.onrender.com/api/health bash scripts/wake_render.sh
+```
+
+> Important: a **daily** ping only wakes the service once each day. On Render
+> free tier, the service can still go back to sleep after ~15 minutes of
+> inactivity. If you want to avoid most cold starts, change the workflow cron to
+> run more frequently or upgrade the service plan.
+
+---
+
 ## API Reference
 
 | Method | Endpoint        | Description                                                    |
@@ -236,8 +269,9 @@ the **stricter of the two** — rules can only raise the tier, never lower it.
 - Trained on **synthetic data** — calibration and feature importance may not
   generalise to real transaction distributions without retraining.
 - The **free Render tier** spins down after inactivity; the first request after
-  sleep takes ~30 s. Use UptimeRobot to ping `/api/health` every 5 minutes to
-  keep it warm, or upgrade to Render Starter.
+  sleep takes ~30 s. This repo includes a daily wake workflow, but avoiding most
+  cold starts still requires more frequent pings (for example every 5 minutes)
+  or upgrading to Render Starter.
 - Business impact figures on the Impact tab use **illustrative cost units** from
   the dataset. Calibrate `cost-fn` and `cost-fp` inputs to your institution's
   actual cost structure before drawing conclusions.
