@@ -3,7 +3,7 @@ Fraud Monitoring dashboard with Live fraud detection and business impact calcula
 
 **Demo:** 
 <p align="center">
-  <img src="fraudshield_demo.gif" width="600"/>
+  <img src="fraudshield_demo.gif" width="100%"/>
 </p>
 ---
 
