@@ -86,17 +86,17 @@ body[data-theme="light"] {
   --info-dim:    rgba(36, 95, 190, 0.10);
   --purple:      #6948c7;
 
-  --text:        #152a41;
-  --text-dim:    #304b67;
-  --text-faint:  #5d758f;
-  --text-strong: #0b1827;
+  --text:        #10263c;
+  --text-dim:    #26435f;
+  --text-faint:  #4a647f;
+  --text-strong: #071523;
   --on-accent:   #f7fffb;
 
   --chart-grid:  #c4d2e0;
-  --chart-text:  #1f374e;
-  --chart-muted: #516a84;
+  --chart-text:  #173049;
+  --chart-muted: #45607b;
   --tooltip-bg:  #ffffff;
-  --tooltip-body:#304b67;
+  --tooltip-body:#26435f;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
